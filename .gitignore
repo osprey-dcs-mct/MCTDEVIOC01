@@ -1,0 +1,10 @@
+O.linux-x86_64/
+O.Common/
+bin/
+/db/
+dbd/
+envPaths
+info_settings.req
+info_positions.req
+*.swp
+*.local

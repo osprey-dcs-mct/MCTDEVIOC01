@@ -1,0 +1,230 @@
+# $File: //ASP/opa/mct/iocs/MCTDEVIOC01/MCTDEVIOC01App/Db/dmm_energy_control.db $
+# $Revision: #2 $
+# $DateTime: 2022/03/16 15:18:10 $
+# Last checked in by: $Author: pozara $
+#
+# Description:
+# MCT DMM energy control
+#
+#
+# Copyright (c) 2021  Australian Synchrotron
+#
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+# 
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+# 
+# * Neither the name of the copyright holder nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Contact details:
+# andrazp@ansto.gov.au
+# 800 Blackburn Road, Clayton, Victoria 3168, Australia.
+#
+
+
+
+record (ao, "MCTMONO01:ENERGY_REQUEST_SP") {
+   field (DESC, "Energy request value")
+   field (SCAN, "Passive")
+   field (PINI, "YES")
+
+   field (EGU,  "keV")
+   field (PREC, "2")
+
+   field (LOPR, "8.0")
+   field (HOPR, "40.0")
+   field (DRVL, "8.0")
+   field (DRVH, "40.0")
+}
+
+record (bo, "MCTMONO01:ENERGY_USER_MODE_CMD") {
+   field (DESC, "Switch between user modes")
+   field (SCAN, "Passive")
+
+   field (PINI, "YES")
+   field (VAL, "0")
+
+   field (ZNAM, "Basic")      field (ZSV, "NO_ALARM")
+   field (ONAM, "Advanced")   field (OSV, "MINOR")
+}
+
+record (bo, "MCTMONO01:ENERGY_CONFIG_VALID_CMD") {
+   field (DESC, "Validate parameters")
+   field (SCAN, "Passive")
+   field (PINI, "YES")
+
+   field (ZNAM, "Do nothing")     field (ZSV, "NO_ALARM")
+   field (ONAM, "Check config")   field (OSV, "MINOR")
+
+   field (HIGH, "1")
+}
+
+record (bi, "MCTMONO01:ENERGY_CONFIG_VALID_STATUS") {
+   field (DESC, "Is the param config valid")
+   field (SCAN, "Passive")
+
+   field (ZNAM, "Invalid")   field (ZSV, "MINOR")
+   field (ONAM, "Valid")     field (OSV, "NO_ALARM")
+}
+
+record (ao, "MCTMONO01:OFFSET_REQUEST_SP") {
+   field (DESC, "Distance between the two multilayers")
+   field (SCAN, "Passive")
+   field (PINI, "YES")
+
+   field (DISV, "0")
+   field (SDIS, "MCTMONO01:ENERGY_USER_MODE_CMD")
+
+   field (EGU,  "mm")
+   field (PREC, "2")
+
+   field (LOPR, "12.5")
+   field (HOPR, "23.5")
+   field (DRVL, "12.5")
+   field (DRVH, "23.5")
+}
+
+record (mbbo, "MCTMONO01:STRIPE_REQUEST_CMD") {
+   field (DESC, "Stripe selection")
+   field (SCAN, "Passive")
+   field (PINI, "YES")
+
+   field (UNSV, "MAJOR")
+
+   field (ZRVL, "0")   field (ZRST, "Ru/C")   field (ZRSV, "NO_ALARM")
+   field (ONVL, "1")   field (ONST, "V/B4C")    field (ONSV, "NO_ALARM")
+   field (TWVL, "2")   field (TWST, "W/B4C")   field (TWSV, "NO_ALARM")
+}
+
+record (bo, "MCTMONO01:REQUEST_ENERGY_CMD") {
+   field (DESC, "Request move to the energy")
+   field (SCAN, "Passive")
+
+   field (ZNAM, "Do nothing")   field (ZSV, "NO_ALARM")
+   field (ONAM, "Request E")    field (OSV, "MINOR")
+
+   field (HIGH, "0.5")
+}
+
+record (bo, "MCTMONO01:BLOCK_ENERGY_REQUESTS") {
+   field (DESC, "Prevent new energy requests")
+   field (SCAN, "Passive")
+
+   field (ZNAM, "Allowed")   field (ZSV, "NO_ALARM")
+   field (ONAM, "Blocked")   field (OSV, "MINOR")
+}
+
+# Calculate if any of the motors are moving
+#
+record (calc, "MCTMONO01:MOVING_MONITOR_CALC") {
+   field (DESC, "Have the motors done moving calc")
+   field (PINI, "Yes")
+   field (SCAN, "Passive")
+
+   field (INPA, "MCTMONO01MOT01.DMOV CP MS")
+   field (INPB, "MCTMONO01MOT02.DMOV CP MS")
+   field (INPC, "MCTMONO01MOT03.DMOV CP MS")
+   field (INPD, "MCTMONO01MOT04.DMOV CP MS")
+   field (INPE, "MCTMONO01MOT05.DMOV CP MS")
+   field (INPF, "MCTMONO01MOT06.DMOV CP MS")
+   field (INPG, "MCTMONO01MOT07.DMOV CP MS")
+   
+   field (CALC, "A && B && C && D && E && F && G")
+}
+
+record(bi, "MCTMONO01:MOVING_MONITOR") {
+   field (DESC, "Are we moving to energy?")
+
+   field (INP,  "MCTMONO01:MOVING_MONITOR_CALC CP MS")
+    
+   field (ZNAM, "Moving")  field(ZSV, "MINOR")
+   field (ONAM, "Stopped") field(OSV, "NO_ALARM")
+}
+
+record (longin, "MCTMONO01:ENERGY_CTRL_SCRIPT_HEARTBEAT") {
+   field (DESC, "Energy calc script heartbeat")
+   field (SCAN, "Passive")
+
+   field (LOPR, "0")
+   field (HOPR, "1000")
+}
+
+record (stringin, "MCTMONO01:ENERGY_CTRL_SCRIPT_MESSAGE") {
+   field (DESC, "Last energy calc script message")
+
+   field (PINI, "YES")
+   field (SCAN, "Passive")
+
+   field (FLNK, "MCTMONO01:MESSAGE_TIMESTAMP")
+}
+
+# Timestamp of the lastest error
+#
+record (stringin, "MCTMONO01:MESSAGE_TIMESTAMP") {
+    field (DESC, "Last message timestamp")
+    field (DTYP, "Soft Timestamp")
+    field (SCAN, "Passive")
+    field (INP,"@%F %T")
+}
+
+# Request all motion to stop
+#
+record (bo, "MCTMONO01:STOP_ALL_MOTION_CMD") {
+   field (DESC, "Stop all motors command")
+   field (SCAN, "Passive")
+   field (PINI, "YES")
+
+   field (ZNAM, "Do nothing")     field (ZSV, "NO_ALARM")
+   field (ONAM, "Stop")           field (OSV, "MINOR")
+
+   field (HIGH, "1")
+
+   field (FLNK,  "MCTMONO01:STOP_ALL_MOTION")
+}
+
+# Distribute the stop request
+#
+record (dfanout, "MCTMONO01:STOP_ALL_MOTION") {
+   field (DESC, "Stop all motors")
+   field (SCAN, "Passive")
+
+   field (VAL, "1")
+
+   # OMSL options:
+   #  - closed_loop: output value retrieved from PV defined in DOL field
+   #  - supervisory: output value retrieved from the VAL field
+   #
+   field (OMSL, "supervisory")
+   
+   field (SELM, "All")          
+
+   field (OUTA, "MCTMONO01MOT01.STOP PP")
+   field (OUTB, "MCTMONO01MOT02.STOP PP")
+   field (OUTC, "MCTMONO01MOT03.STOP PP")
+   field (OUTD, "MCTMONO01MOT04.STOP PP")
+   field (OUTE, "MCTMONO01MOT05.STOP PP")
+   field (OUTF, "MCTMONO01MOT06.STOP PP")
+   field (OUTG, "MCTMONO01MOT07.STOP PP")
+}
+
+# end

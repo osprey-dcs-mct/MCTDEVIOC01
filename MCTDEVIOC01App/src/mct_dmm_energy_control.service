@@ -1,0 +1,24 @@
+#!/bin/bash
+#
+# $File: //ASP/opa/mct/iocs/MCTDEVIOC01/MCTDEVIOC01App/src/mct_dmm_energy_control.service $
+# $Revision: #1 $
+# $DateTime: 2022/02/21 12:05:01 $
+# Last checked in by: $Author: pozara $
+#
+# MCT DMM energy control service wrapper
+# 
+ 
+# Set up environment variables to configure the generic.service script.
+#
+export SERVICE_SERVICE=$( basename $0 )
+export SERVICE_NAME=mct_dmm_energy_control
+export SERVICE_USER=ics
+export SERVICE_SCRIPT="/beamline/perforce/opa/mct/iocs/MCTDEVIOC01/bin/linux-x86_64/mct_dmm_energy_control"
+export SERVICE_SLEEP=5
+ 
+# Now run actual service script.
+#
+.  /asp/config/host_setup.rc
+${HOST_BUNDLE:?}/epics/service/bin/${EPICS_HOST_ARCH}/generic.service "$@"
+ 
+# end

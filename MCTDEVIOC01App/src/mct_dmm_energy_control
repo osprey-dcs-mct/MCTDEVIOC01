@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+#
+# $File: //Will/be/resolved/upon/submit $
+# $Revision: #3 $
+# $DateTime: 2017/02/15 17:27:23 $
+# Last checked in by: $Author: cs-engineer $
+#
+# Description:
+#
+# Formal template parameters:
+#
+# Copyright (c) 2019  Australian Synchrotron
+#
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of the copyright holder nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Contact details:
+# andrazp@ansto.gov.au
+# 800 Blackburn Road, Clayton, Victoria 3168, Australia.
+#
+
+import math
+import numpy as np
+import scipy.constants as consts
+from itertools import islice
+from typing import NamedTuple
+import asyncio
+import threading
+import time
+import signal
+import sys
+from epics import PV, Device
+import functools
+
+VERSION = "1.0.0"
+
+# Constants
+# speed of light in angstroms/second
+C_ANGS = consts.c / 1.0e-10
+
+# Planck's constant in eV/s
+H_EVS = consts.physical_constants.get("Planck constant in eV s")[0]
+
+Z2_MIN = 379
+Z2_MAX = 1652
+
+OFFSET_MIN = 12.5
+OFFSET_MAX = 23.5
+OFFSET_FOR_ENERGY_THRASHOLD = 22.0
+
+ENERGY_MIN = 8.0
+ENERGY_MAX = 40.0
+
+DEFAULT_Y1_POSITION = 0.0
+
+
+class Lattice(NamedTuple):
+    dspace: float
+    gamma: float
+    X: float
+    dat1: str
+    dat2: str
+    energy_min: float
+    energy_max: float
+
+
+LATTICE = {
+    "Ru/C":  Lattice(37.0, 0.5, -28.0, "RU.DAT", "C.DAT",   8.0,  23.0),
+    "V/B4C": Lattice(25.0, 0.5,   0.0, "V.DAT",  "B4C.DAT", 8.0,  25.0),
+    "W/B4C": Lattice(32.0, 0.4,  28.0, "W.DAT",  "B4C.DAT", 21.0, 40.0),
+}
+
+
+# Compensation for the dips is currently not supported
+#
+DIPS = {"W": [10.204, 11.542, 12.098], "V": [22.117]}
+
+
+def sigint_handler(sig, frame):
+    print("SIGINT received. Terminating...")
+    sys.exit(0)
+
+
+def energy_to_offset(energy):
+    """Select an appropriate offset for selected energy
+
+    Args:
+        energy (float): Requested energy in keV
+
+    Returns:
+        offset (float): Offset for the energy in mm
+    """
+    if energy >= ENERGY_MIN and energy <= OFFSET_FOR_ENERGY_THRASHOLD:
+        return 23.5
+    elif energy > OFFSET_FOR_ENERGY_THRASHOLD and energy <= ENERGY_MAX:
+        return 12.5
+
+
+def calculate_delta(energy, refrations_file_path):
+    # Calculate the line in the refraction file that holds the refraction index for
+    # this energy.
+    # The first entry is for energy 1.0 keV and it goes to 40.0 keV with the increments
+    # of 0.1 keV
+    #
+    ref_file_line = (int)(energy * 10) - 10
+
+    with open(refrations_file_path) as ref_file:
+        refractions = np.genfromtxt(islice(ref_file.readlines(), ref_file_line, ref_file_line + 2))
+
+    delta_1 = refractions[0, 1]
+    delta_2 = refractions[1, 1]
+    energy_1 = refractions[0, 0]
+    energy_2 = refractions[1, 0]
+
+    delta_slope = (delta_2 - delta_1) / (energy_2 - energy_1)
+    energy_diff = energy_2 - energy
+    delta = delta_2 - delta_slope * energy_diff
+
+    return delta
+
+
+def energy_to_motor_positions(energy, stripe, offset=None):
+    """
+    Convert the requested energy to bragg's angle (thetaB).
+
+    Every stripe is made out of different material so we need to take the refraction
+    of those materials into the account.
+
+    Args:
+        energy (float):  The requested energy in keV
+        stripe (string): Stripe selection. Possible options Ru/C, W/B4C, V/B4C. Anything
+                         else will be ignored.
+
+    Returns:
+        is_valid (bool), bragg (float), Z2 (float), X (float), offset (float):
+        All the motor postions for the requested energy, stripe and offset
+    """
+
+    # Check that a valid stripe has been requested
+    #
+    if stripe not in LATTICE:
+        return False, None, None, None, None
+
+    # Check that the requested energy can be achieved using the selected stripe and that
+    # the offset isn't outside of permissable range
+    #
+    if (
+        energy < LATTICE[stripe].energy_min
+        or energy > LATTICE[stripe].energy_max
+        or (offset is not None and (offset < OFFSET_MIN or offset > OFFSET_MAX))
+    ):
+        return False, None, None, None, None
+
+    # Get gamma and dspace for the selected stripe
+    #
+    gamma = LATTICE[stripe].gamma
+    dspace = LATTICE[stripe].dspace
+
+    # Calculate the real part of the refraction index (delta) for both materials
+    # in the stripe using the refraction files for each of the materials and
+    # calculate the combined delta
+    #
+    delta_1 = calculate_delta(energy, f"../../crapi/refractions/{LATTICE[stripe].dat1}")
+    delta_2 = calculate_delta(energy, f"../../crapi/refractions/{LATTICE[stripe].dat2}")
+    delta = delta_1 * gamma + delta_2 * (1.0 - gamma)
+
+    # Calculate wavelength from the energy. We are using Planck's constant in eV
+    # so we have to translate from the requested energy in keV to eV.
+    #
+    wavelength = (C_ANGS * H_EVS) / (energy * 1000.0)
+
+    # Calculate Bragg's angle (thetaB), corrected for the refraction
+    #
+    theta_b = math.asin(
+        math.sqrt(
+            math.pow(wavelength, 2)
+            + (8 * delta * math.pow(dspace, 2))
+            - (2 * delta * math.pow(wavelength, 2))
+        )
+        / (2 * dspace)
+    )
+
+    # If the offset is not explicitly defined, we choose one of the pre-defined
+    # offsets
+    #
+    offset = energy_to_offset(energy) if offset is None else offset
+
+    # Calculate the Z2 (horizontal distance between the two multilayers),
+    # This is needed to compensate for the angle and offset
+    #
+    z2 = offset / math.tan(2 * theta_b)
+
+    # Check that Z2 is within travel limits. If the offset is not appropriate for
+    # this energy-stripe pair, Z2 is not able to compensate for it
+    #
+    if not z2 >= Z2_MIN and z2 <= Z2_MAX:
+        return False, None, None, None, None
+
+    return True, round(math.degrees(theta_b), 4), round(z2, 3), LATTICE[stripe].X, offset
+
+
+class Motor(Device):
+    def __init__(self, aliases=None, mutable=False, **kwargs):
+        if aliases is None:
+            aliases = {}
+        aliases.update({"_move": ".VAL", "_position": ".RBV"})
+        super().__init__(aliases=aliases, mutable=mutable, **kwargs)
+
+    def move_to(self, position):
+        self.put("_move", position, use_complete=True, timeout=600)
+
+    def get_position(self):
+        return self._position
+
+
+_x1 = Motor(prefix="MCTMONO01MOT04")
+_x2 = Motor(prefix="MCTMONO01MOT05")
+
+_bragg1 = Motor(prefix="MCTMONO01MOT06")
+_bragg2 = Motor(prefix="MCTMONO01MOT07")
+
+_y1 = Motor(prefix="MCTMONO01MOT02")
+_y2 = Motor(prefix="MCTMONO01MOT03")
+_z2 = Motor(prefix="MCTMONO01MOT01")
+
+_energy_request_pv = PV("MCTMONO01:ENERGY_REQUEST_SP")
+_offset_request_pv = PV("MCTMONO01:OFFSET_REQUEST_SP")
+_stripe_request_pv = PV("MCTMONO01:STRIPE_REQUEST_CMD")
+_is_config_valid = PV("MCTMONO01:ENERGY_CONFIG_VALID_STATUS")
+_user_mode = PV("MCTMONO01:ENERGY_USER_MODE_CMD")
+
+_heartbeat = PV("MCTMONO01:ENERGY_CTRL_SCRIPT_HEARTBEAT")
+_messages = PV("MCTMONO01:ENERGY_CTRL_SCRIPT_MESSAGE")
+
+_block_requests = PV("MCTMONO01:BLOCK_ENERGY_REQUESTS")
+
+_all_motors = (_bragg1, _bragg2, _z2, _y1, _y2, _x1, _x2)
+
+
+def heartbeat_counter():
+    counter = 0
+    while True:
+        _heartbeat.put(counter)
+        counter = (counter + 1) % 1000
+        time.sleep(1)
+
+
+def register_pv(pvname, loop, queue):
+    def callback(**data):
+        asyncio.run_coroutine_threadsafe(queue.put(data), loop)
+
+    return PV(pvname, callback=callback)
+
+
+def motors_connected():
+    # Requesting the PV without connecting to ut as we can't control the timeout
+    # in that call.
+    # Then, connecting manually with a defined timeout.
+    #
+    motor_connection_statuses = [
+        motor.PV("_position", connect=False).connect(timeout=0.5) for motor in _all_motors
+    ]
+    all_connected = functools.reduce(lambda a, b: a and b, motor_connection_statuses)
+    return all_connected
+
+
+def move_to_energy(positions):
+    for pv, val in zip(_all_motors, positions):
+        pv.move_to(val)
+    waiting = True
+    while waiting:
+        time.sleep(0.1)
+        waiting = not all([pv.PV("_move").put_complete for pv in _all_motors])
+    _block_requests.put(0)
+
+
+async def main(loop):
+    queue = asyncio.Queue()
+    register_pv("MCTMONO01:REQUEST_ENERGY_CMD", loop, queue)
+    register_pv("MCTMONO01:ENERGY_CONFIG_VALID_CMD", loop, queue)
+
+    while True:
+        while True:
+            update = await queue.get()
+            if update["value"] == 1:
+                break
+
+        if update["pvname"] == "MCTMONO01:REQUEST_ENERGY_CMD":
+            # If new energy request comes in
+            #
+            _block_requests.put(1)
+            if motors_connected():
+                _messages.put("All motors online")
+                # Check if the configuration is valid
+                #
+                if _user_mode.get() == 0:
+                    is_valid, bragg, z2, x, offset = energy_to_motor_positions(
+                        _energy_request_pv.get(), _stripe_request_pv.get(as_string=True)
+                    )
+                else:
+                    is_valid, bragg, z2, x, offset = energy_to_motor_positions(
+                        _energy_request_pv.get(),
+                        _stripe_request_pv.get(as_string=True),
+                        _offset_request_pv.get(),
+                    )
+
+                # If the configuration is valid initate the move
+                #
+                if is_valid:
+                    _messages.put("Request is valid, initiating move")
+                    # Move the motors to achieve the energy
+                    #
+                    positions = (bragg, bragg, z2, DEFAULT_Y1_POSITION, offset, x, x)
+                    threading.Thread(target=move_to_energy, args=(positions,), daemon=True).start()
+                else:
+                    _is_config_valid.put(0)
+                    _messages.put("Request invalid. Not moving")
+            else:
+                _messages.put("Can't connect to all motors. Not moving")
+                _block_requests.put(0)
+        elif update["pvname"] == "MCTMONO01:ENERGY_CONFIG_VALID_CMD":
+            # If new configuration validation request comes in
+            #
+            if _user_mode.get() == 0:
+                is_valid, bragg, z2, x, offset = energy_to_motor_positions(
+                    _energy_request_pv.get(), _stripe_request_pv.get(as_string=True)
+                )
+            else:
+                is_valid, bragg, z2, x, offset = energy_to_motor_positions(
+                    _energy_request_pv.get(),
+                    _stripe_request_pv.get(as_string=True),
+                    _offset_request_pv.get(),
+                )
+            if is_valid:
+                _messages.put("Configration valid")
+                _is_config_valid.put(1)
+            else:
+                _messages.put("Configration invalid")
+                _is_config_valid.put(0)
+        else:
+            print("Unknown interrupt")
+
+
+if __name__ == "__main__":
+    print("MCT DMM energy control script started!")
+    print(f"Version: {VERSION}")
+
+    _messages.put("Script started")
+
+    # Register SIGINT signal handler
+    #
+    signal.signal(signal.SIGINT, sigint_handler)
+
+    # Start a new thread to handle the heartbeat monitor
+    #
+    threading.Thread(target=heartbeat_counter, daemon=True).start()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main(loop))
