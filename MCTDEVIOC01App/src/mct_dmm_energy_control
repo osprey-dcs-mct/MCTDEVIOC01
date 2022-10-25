@@ -87,9 +87,9 @@ class Lattice(NamedTuple):
 
 
 LATTICE = {
-    "Ru/C":  Lattice(37.0, 0.5, -28.0, "RU.DAT", "C.DAT",   8.0,  23.0),
-    "V/B4C": Lattice(25.0, 0.5,   0.0, "V.DAT",  "B4C.DAT", 8.0,  25.0),
-    "W/B4C": Lattice(32.0, 0.4,  28.0, "W.DAT",  "B4C.DAT", 21.0, 40.0),
+    "Ru/C":  Lattice(37.5, 0.51, -28.0, "RU.DAT", "C.DAT",   8.0,  23.0),
+    "V/B4C": Lattice(25.7, 0.50,   0.0, "V.DAT",  "B4C.DAT", 8.0,  25.0),
+    "W/B4C": Lattice(32.0, 0.38,  28.0, "W.DAT",  "B4C.DAT", 21.0, 40.0),
 }
 
 
