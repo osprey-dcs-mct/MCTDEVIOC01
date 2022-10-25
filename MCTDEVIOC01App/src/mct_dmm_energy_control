@@ -70,12 +70,10 @@ Z2_MAX = 1652
 
 OFFSET_MIN = 12.5
 OFFSET_MAX = 23.5
-OFFSET_FOR_ENERGY_THRASHOLD = 22.0
+OFFSET_CHANGE = 22.0
 
 ENERGY_MIN = 8.0
 ENERGY_MAX = 40.0
-
-DEFAULT_Y1_POSITION = 0.0
 
 
 class Lattice(NamedTuple):
@@ -114,9 +112,9 @@ def energy_to_offset(energy):
     Returns:
         offset (float): Offset for the energy in mm
     """
-    if energy >= ENERGY_MIN and energy <= OFFSET_FOR_ENERGY_THRASHOLD:
+    if energy >= ENERGY_MIN and energy <= OFFSET_CHANGE:
         return 23.5
-    elif energy > OFFSET_FOR_ENERGY_THRASHOLD and energy <= ENERGY_MAX:
+    elif energy > OFFSET_CHANGE and energy <= ENERGY_MAX:
         return 12.5
 
 
@@ -258,7 +256,7 @@ _messages = PV("MCTMONO01:ENERGY_CTRL_SCRIPT_MESSAGE")
 
 _block_requests = PV("MCTMONO01:BLOCK_ENERGY_REQUESTS")
 
-_all_motors = (_bragg1, _bragg2, _z2, _y1, _y2, _x1, _x2)
+_all_motors = (_bragg1, _bragg2, _z2, _y2, _x1, _x2)
 
 
 def heartbeat_counter():
@@ -334,7 +332,7 @@ async def main(loop):
                     _messages.put("Request is valid, initiating move")
                     # Move the motors to achieve the energy
                     #
-                    positions = (bragg, bragg, z2, DEFAULT_Y1_POSITION, offset, x, x)
+                    positions = (bragg, bragg, z2, _y1.get_position() + offset, x, x)
                     threading.Thread(target=move_to_energy, args=(positions,), daemon=True).start()
                 else:
                     _is_config_valid.put(0)
