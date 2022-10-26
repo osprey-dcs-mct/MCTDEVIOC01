@@ -44,7 +44,7 @@ dbLoadRecords ("${IOCSTATUS}/db/IocStatus.template", "IOC=${IOCNAME}")
 # Load the energy control database and start the calculation script as a service
 #
 dbLoadRecords ("db/dmm_energy_control.db")
-register_service_name ("/beamline/perforce/opa/mct/iocs/MCTMSCIOC01/bin/linux-x86_64/mct_dmm_energy_control")
+register_service_name ("/beamline/perforce/opa/mct/iocs/MCTDEVIOC01/bin/linux-x86_64/mct_dmm_energy_control")
 
 cd ${TOP}/iocBoot/${IOC}
 iocInit
